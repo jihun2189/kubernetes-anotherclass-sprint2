@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    tools {
+        gradle 'gradle-7.6.1' // 🔹 Jenkins의 Global Gradle 사용
+    }
+
     environment {
         // NHN Cloud NCR 정보
         NCR_REGISTRY = "4a7e3ac9-kr1-registry.container.nhncloud.com"
@@ -12,6 +16,10 @@ pipeline {
         // GitHub Repository 정보
         GIT_REPO_URL = "https://github.com/jihun2189/kubernetes-anotherclass-sprint2.git"
         GIT_BRANCH = "main"
+
+        // 빌드된 JAR 파일 경로 설정
+        BUILD_DIR = "build/libs"
+        JAR_FILE = "app-0.0.1-SNAPSHOT.jar"
     }
     
     stages {
@@ -24,10 +32,11 @@ pipeline {
         stage('Build Application') {
             steps {
                 script {
-                    sh """
-                    chmod +x ./gradlew
-                    ./gradlew clean build
-                    """
+                    try {
+                        sh "gradle clean build"
+                    } catch (Exception e) {
+                        error "Gradle build failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -36,7 +45,11 @@ pipeline {
             steps {
                 script {
                     sh """
-                    cp build/libs/app-0.0.1-SNAPSHOT.jar 2121/build/docker/
+                    if [ ! -f ${BUILD_DIR}/${JAR_FILE} ]; then
+                        echo "Error: JAR file not found!"
+                        exit 1
+                    fi
+                    cp ${BUILD_DIR}/${JAR_FILE} 2212/build/docker/
                     """
                 }
             }
@@ -47,7 +60,7 @@ pipeline {
                 script {
                     sh """
                     docker build -t \${NCR_REGISTRY}/\${NCR_NAMESPACE}/\${NCR_IMAGE_NAME}:\${NCR_TAG} \
-                    -f 2121/build/docker/Dockerfile 2121/build/docker/
+                    -f 2212/build/docker/Dockerfile 2212/build/docker/
                     """
                 }
             }
@@ -79,7 +92,7 @@ pipeline {
             steps {
                 script {
                     sh """
-                    docker rmi \${NCR_REGISTRY}/\${NCR_NAMESPACE}/\${NCR_IMAGE_NAME}:\${NCR_TAG}
+                    docker rmi \${NCR_REGISTRY}/\${NCR_NAMESPACE}/\${NCR_IMAGE_NAME}:\${NCR_TAG} || true
                     """
                 }
             }
