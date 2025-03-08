@@ -1,90 +1,87 @@
 pipeline {
     agent any
 
-    tools {
-        gradle 'gradle-7.6.1'
-        jdk 'jdk-17'
-    }
-
     environment {
-        // 본인의 username으로 하실 분은 수정해주세요.
-        DOCKERHUB_USERNAME = '1pro'
-        GITHUB_URL = 'https://github.com/k8s-1pro/kubernetes-anotherclass-sprint2.git'
+        // NHN Cloud NCR 정보
+        NCR_REGISTRY = "4a7e3ac9-kr1-registry.container.nhncloud.com"
+        NCR_NAMESPACE = "ncr_test"
+        NCR_IMAGE_NAME = "myapp"
+        NCR_TAG = "latest"
+        NCR_CREDENTIALS_ID = "NCR_CREDENTIALS"
 
-        // 실습 넘버링
-        CLASS_NUM = '2212'
+        // GitHub Repository 정보
+        GIT_REPO_URL = "https://github.com/jihun2189/kubernetes-anotherclass-sprint2.git"
+        GIT_BRANCH = "main"
     }
     
     stages {
-        stage('소스파일 체크아웃') {
+        stage('Checkout Source Code from GitHub') {
             steps {
-                // 소스코드를 가져올 Github 주소
-                git branch: 'main', url: 'https://github.com/k8s-1pro/kubernetes-anotherclass-api-tester.git'
+                git branch: "${GIT_BRANCH}", url: "${GIT_REPO_URL}"
             }
         }
 
-        stage('소스 빌드') {
+        stage('Build Application') {
             steps {
-                // 755권한 필요 (윈도우에서 Git으로 소스 업로드시 권한은 644)
-                sh "chmod +x ./gradlew"
-                sh "gradle clean build"
+                script {
+                    sh """
+                    chmod +x ./gradlew
+                    ./gradlew clean build
+                    """
+                }
             }
         }
 
-        stage('릴리즈파일 체크아웃') {
+        stage('Prepare Docker Build Context') {
             steps {
-                checkout scmGit(branches: [[name: '*/main']],
-                    extensions: [[$class: 'SparseCheckoutPaths',
-                    sparseCheckoutPaths: [[path: "/${CLASS_NUM}"]]]],
-					userRemoteConfigs: [[url: "${GITHUB_URL}"]])
+                script {
+                    sh """
+                    cp build/libs/app-0.0.1-SNAPSHOT.jar 2121/build/docker/
+                    """
+                }
             }
         }
 
-        stage('컨테이너 빌드') {
+        stage('Build Docker Image') {
             steps {
-                // jar 파일 복사
-                sh "cp ./build/libs/app-0.0.1-SNAPSHOT.jar ./${CLASS_NUM}/build/docker/app-0.0.1-SNAPSHOT.jar"
-
-                // 도커 빌드
-                sh "docker build -t ${DOCKERHUB_USERNAME}/api-tester:v1.0.0 ./${CLASS_NUM}/build/docker"
+                script {
+                    sh """
+                    docker build -t \${NCR_REGISTRY}/\${NCR_NAMESPACE}/\${NCR_IMAGE_NAME}:\${NCR_TAG} \
+                    -f 2121/build/docker/Dockerfile 2121/build/docker/
+                    """
+                }
             }
         }
 
-        stage('컨테이너 업로드') {
+        stage('Login to NHN Cloud NCR') {
             steps {
-                // DockerHub로 이미지 업로드
-                script{
-                    if (DOCKERHUB_USERNAME == "1pro") {
-                        echo "docker push ${DOCKERHUB_USERNAME}/api-tester:v1.0.0"
-                    } else {
-                        sh "docker push ${DOCKERHUB_USERNAME}/api-tester:v1.0.0"
+                script {
+                    withCredentials([usernamePassword(credentialsId: NCR_CREDENTIALS_ID, usernameVariable: 'NCR_USER', passwordVariable: 'NCR_PASS')]) {
+                        sh """
+                        echo "\${NCR_PASS}" | docker login \${NCR_REGISTRY} -u "\${NCR_USER}" --password-stdin
+                        """
                     }
                 }
             }
         }
 
-        stage('쿠버네티스 배포') {
+        stage('Push Docker Image to NHN Cloud NCR') {
             steps {
-                // K8S 배포
-                sh "kubectl apply -f ./${CLASS_NUM}/deploy/k8s/namespace.yaml"
-                sh "kubectl apply -f ./${CLASS_NUM}/deploy/k8s/configmap.yaml"
-                sh "kubectl apply -f ./${CLASS_NUM}/deploy/k8s/secret.yaml"
-                sh "kubectl apply -f ./${CLASS_NUM}/deploy/k8s/service.yaml"
-                sh "kubectl apply -f ./${CLASS_NUM}/deploy/k8s/deployment.yaml"
+                script {
+                    sh """
+                    docker push \${NCR_REGISTRY}/\${NCR_NAMESPACE}/\${NCR_IMAGE_NAME}:\${NCR_TAG}
+                    """
+                }
             }
         }
 
-        stage('배포 확인') {
+        stage('Cleanup') {
             steps {
-                // 10초 대기
-                sh "sleep 10"
-
-                // K8S 배포
-                sh "kubectl get -f ./${CLASS_NUM}/deploy/k8s/namespace.yaml"
-                sh "kubectl get -f ./${CLASS_NUM}/deploy/k8s/configmap.yaml"
-                sh "kubectl get -f ./${CLASS_NUM}/deploy/k8s/secret.yaml"
-                sh "kubectl get -f ./${CLASS_NUM}/deploy/k8s/service.yaml"
-                sh "kubectl get -f ./${CLASS_NUM}/deploy/k8s/deployment.yaml"
+                script {
+                    sh """
+                    docker rmi \${NCR_REGISTRY}/\${NCR_NAMESPACE}/\${NCR_IMAGE_NAME}:\${NCR_TAG}
+                    """
+                }
             }
         }
     }
